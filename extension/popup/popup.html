@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hotel Monitor Extension</title>
+    <style>
+      body { font-family: Arial, sans-serif; width: 340px; padding: 12px; }
+      input, button, select { width: 100%; margin: 6px 0; padding: 8px; box-sizing: border-box; }
+      .row { display: flex; gap: 8px; }
+      .row button { width: 50%; }
+      pre { background: #111; color: #0f0; padding: 8px; border-radius: 6px; max-height: 180px; overflow: auto; }
+      .ok { color: #157347; }
+      .err { color: #b42318; }
+      .suggestions { border: 1px solid #ddd; border-radius: 6px; padding: 8px; max-height: 180px; overflow: auto; }
+      .suggestion-item { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 4px 0; }
+      .suggestion-item.low-score { background: #fff3f2; border-radius: 4px; padding: 4px; }
+      .score { color: #666; min-width: 56px; }
+      .history-list { border: 1px solid #ddd; border-radius: 6px; padding: 8px; max-height: 180px; overflow: auto; }
+      .history-item { border-bottom: 1px dashed #ddd; padding: 6px 0; font-size: 12px; }
+      .history-item:last-child { border-bottom: none; }
+      .history-meta { color: #666; margin-bottom: 4px; }
+      .history-rollback { width: auto; padding: 4px 8px; margin: 0; }
+    </style>
+  </head>
+  <body>
+    <h3>Hotel Monitor MVP</h3>
+
+    <label>API Base</label>
+    <select id="apiBase">
+      <option value="http://127.0.0.1:8001">http://127.0.0.1:8001</option>
+      <option value="http://127.0.0.1:8000">http://127.0.0.1:8000</option>
+    </select>
+
+    <label>Username</label>
+    <input id="username" value="smoke_user" />
+    <label>Password</label>
+    <input id="password" value="pass1234" type="password" />
+    <button id="btnLogin">1) Login</button>
+
+    <label>Device ID</label>
+    <input id="deviceId" placeholder="auto generated" />
+    <button id="btnBind">2) Bind Extension</button>
+
+    <label>Competitor Name</label>
+    <input id="competitorName" value="Smoke Competitor" />
+    <label>Room Type</label>
+    <input id="roomType" value="豪华大床房" />
+    <label>Price</label>
+    <input id="price" value="388" />
+    <button id="btnReport">3) Report Test Data</button>
+
+    <label>
+      <input id="autoCollectEnabled" type="checkbox" checked />
+      Auto Collect Enabled
+    </label>
+    <label>Min Collect Interval (seconds)</label>
+    <input id="minCollectIntervalSec" type="number" min="10" value="120" />
+    <button id="btnSaveCollectConfig">Save Collect Config</button>
+
+    <div class="row">
+      <button id="btnQueueStatus">Queue Status</button>
+      <button id="btnRetryQueue">Retry Queue</button>
+    </div>
+
+    <h4>Last Auto Report</h4>
+    <pre id="lastReport">null</pre>
+    <h4>Alias Map (JSON: {"rawName":"backendName"})</h4>
+    <textarea id="aliasMapText" rows="4" style="width:100%; box-sizing:border-box;">{}</textarea>
+    <button id="btnSaveAliasMap">Save Alias Map</button>
+    <h4>Unmatched Competitors</h4>
+    <pre id="unmatchedList">[]</pre>
+    <button id="btnSuggestMapping">Suggest Mapping</button>
+    <label>Suggestion Auto-Select Threshold (0-1)</label>
+    <input id="suggestThreshold" type="number" min="0" max="1" step="0.01" value="0.45" />
+    <button id="btnSaveSuggestThreshold">Save Suggest Threshold</button>
+    <h4>Suggested Mapping (Review & Select)</h4>
+    <div id="suggestionsList" class="suggestions"></div>
+    <button id="btnApplySuggested">Apply Selected Suggestions</button>
+    <label>Map Unmatched To (Canonical)</label>
+    <select id="canonicalCompetitor"></select>
+    <button id="btnMapUnmatched">Map All Unmatched To Selected</button>
+    <h4>Alias Change History (latest 10)</h4>
+    <div class="row">
+      <button id="btnUndoLatestAlias">Undo Latest</button>
+      <button id="btnClearAliasHistory">Clear History</button>
+    </div>
+    <div id="aliasHistory" class="history-list">[]</div>
+    <h4>Alias Snapshot (Map + History)</h4>
+    <textarea id="aliasSnapshotText" rows="6" style="width:100%; box-sizing:border-box;"></textarea>
+    <label>Import Mode</label>
+    <select id="aliasSnapshotImportMode">
+      <option value="all">All (Map + History + Threshold)</option>
+      <option value="map">Map Only</option>
+      <option value="history">History Only</option>
+    </select>
+    <label>Map Import Strategy</label>
+    <select id="aliasSnapshotMapStrategy">
+      <option value="replace">Replace All</option>
+      <option value="merge">Merge Into Existing</option>
+    </select>
+    <div class="row">
+      <button id="btnExportAliasSnapshot">Export Snapshot</button>
+      <button id="btnImportAliasSnapshot">Import Snapshot</button>
+    </div>
+    <h4>Recent Auto Reports (latest 10)</h4>
+    <pre id="reportHistory">[]</pre>
+    <p id="status"></p>
+    <pre id="output"></pre>
+
+    <script src="popup.js"></script>
+  </body>
+  </html>
