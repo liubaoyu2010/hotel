@@ -1153,9 +1153,10 @@ def nearby_activities(
                 continue
             if dist is None:
                 # Special handling for exam-type: if address mentions user's city, include
-                if r.activity_type == "exam" and user.hotel_name and r.address:
-                    city_name = user.hotel_name[:2]
-                    if city_name in r.address:
+                if r.activity_type == "exam" and r.address:
+                    from app.services.geo import infer_city
+                    city_name = infer_city(hotel_lat, hotel_lng)
+                    if city_name and city_name in r.address:
                         dist = 0.0
                     else:
                         continue

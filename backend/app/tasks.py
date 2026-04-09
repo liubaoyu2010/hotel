@@ -491,11 +491,12 @@ def collect_activities_task(
                     continue
                 if distance_km_val is None:
                     # No coordinates — special handling for exam-type activities
-                    if raw.activity_type == "exam" and city and raw.address:
+                    if raw.activity_type == "exam" and raw.address:
                         # National exams have venues in every major city;
-                        # if the address mentions the user's city, include it
-                        city_name = city[:2]  # e.g. "北京" from "北京国贸大酒店"
-                        if city_name in raw.address:
+                        # if the address mentions the user's city (inferred from coords), include it
+                        from app.services.geo import infer_city
+                        city_name = infer_city(hotel_lat, hotel_lng)
+                        if city_name and city_name in raw.address:
                             distance_km_val = 0.0  # Treat as within radius
                         else:
                             continue
