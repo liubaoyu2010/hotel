@@ -473,7 +473,8 @@ def collect_activities_task(
 
             # Calculate distance if coordinates available
             distance_km_val = None
-            if hotel_lat and hotel_lng and raw.latitude and raw.longitude:
+            has_coords = raw.latitude and raw.longitude
+            if hotel_lat and hotel_lng and has_coords:
                 try:
                     from app.services.geo import distance_km
                     distance_km_val = distance_km(
@@ -483,9 +484,24 @@ def collect_activities_task(
                 except (ValueError, TypeError):
                     pass
 
-            # Skip if outside radius and we have coordinates
-            if distance_km_val is not None and distance_km_val > radius_km:
-                continue
+            # When hotel coordinates are set, enforce radius filtering:
+            if hotel_lat and hotel_lng:
+                if distance_km_val is not None and distance_km_val > radius_km:
+                    # Outside radius — skip
+                    continue
+                if distance_km_val is None:
+                    # No coordinates — special handling for exam-type activities
+                    if raw.activity_type == "exam" and city and raw.address:
+                        # National exams have venues in every major city;
+                        # if the address mentions the user's city, include it
+                        city_name = city[:2]  # e.g. "北京" from "北京国贸大酒店"
+                        if city_name in raw.address:
+                            distance_km_val = 0.0  # Treat as within radius
+                        else:
+                            continue
+                    else:
+                        # Non-exam activity without coords — cannot verify, skip
+                        continue
 
             row = SurroundingActivity(
                 title=raw.title,

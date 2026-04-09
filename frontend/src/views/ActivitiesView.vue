@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from "vue";
-import { Card, Table, Button, Tag, Row, Col, Statistic, Space, Popconfirm, message } from "ant-design-vue";
-import { ReloadOutlined, ThunderboltOutlined, DeleteOutlined } from "@ant-design/icons-vue";
-import { listActivities, triggerActivityCollect, listActivityCollectors, deleteActivity, getProfile } from "../api";
+import { onMounted, ref, computed, watch } from "vue";
+import { Card, Table, Button, Tag, Row, Col, Statistic, Space, Popconfirm, Select, message, Alert } from "ant-design-vue";
+import { ReloadOutlined, ThunderboltOutlined, DeleteOutlined, EnvironmentOutlined } from "@ant-design/icons-vue";
+import { listActivities, listNearbyActivities, triggerActivityCollect, listActivityCollectors, deleteActivity, getProfile } from "../api";
 import dayjs from "dayjs";
 
 const items = ref<any[]>([]);
@@ -10,29 +10,48 @@ const collectors = ref<any[]>([]);
 const loading = ref(false);
 const collecting = ref(false);
 const userCity = ref("");
+const radiusKm = ref(3.0);
+const filterMode = ref<"all" | "nearby">("nearby");
 
 const demandColor: Record<string, string> = { high: "red", medium: "orange", low: "green", HIGH: "red" };
 const demandLabel: Record<string, string> = { high: "高", medium: "中", low: "低", HIGH: "高" };
 const typeLabel: Record<string, string> = { exam: "考试", exhibition: "展会", conference: "会议", concert: "演出", sports: "体育", festival: "节庆", other: "其他" };
 
-const columns = [
-  { title: "活动名称", dataIndex: "title", key: "title", ellipsis: true },
-  { title: "类型", dataIndex: "activity_type", key: "activity_type", width: 80, customRender: ({ text }: any) => typeLabel[text] || text },
-  { title: "热度", dataIndex: "demand_level", key: "demand_level", width: 70 },
-  { title: "开始", dataIndex: "start_time", key: "start_time", width: 110, customRender: ({ text }: any) => dayjs(text).format("MM-DD HH:mm") },
-  { title: "结束", dataIndex: "end_time", key: "end_time", width: 110, customRender: ({ text }: any) => dayjs(text).format("MM-DD HH:mm") },
-  { title: "来源", dataIndex: "source", key: "source", width: 90 },
-  { title: "地址", dataIndex: "address", key: "address", ellipsis: true },
-  { title: "操作", key: "action", width: 80 },
-];
+const columns = computed(() => {
+  const cols: any[] = [
+    { title: "活动名称", dataIndex: "title", key: "title", ellipsis: true },
+    { title: "类型", dataIndex: "activity_type", key: "activity_type", width: 80, customRender: ({ text }: any) => typeLabel[text] || text },
+    { title: "热度", dataIndex: "demand_level", key: "demand_level", width: 70 },
+  ];
+  if (filterMode.value === "nearby") {
+    cols.push({
+      title: "距离", dataIndex: "distance_km", key: "distance_km", width: 90,
+      sorter: (a: any, b: any) => (a.distance_km ?? 999) - (b.distance_km ?? 999),
+      customRender: ({ text }: any) => text != null ? `${text.toFixed(1)} km` : "-",
+    });
+  }
+  cols.push(
+    { title: "开始", dataIndex: "start_time", key: "start_time", width: 110, customRender: ({ text }: any) => dayjs(text).format("MM-DD HH:mm") },
+    { title: "结束", dataIndex: "end_time", key: "end_time", width: 110, customRender: ({ text }: any) => dayjs(text).format("MM-DD HH:mm") },
+    { title: "来源", dataIndex: "source", key: "source", width: 90 },
+    { title: "地址", dataIndex: "address", key: "address", ellipsis: true },
+    { title: "操作", key: "action", width: 80 },
+  );
+  return cols;
+});
 
 const highCount = computed(() => items.value.filter((a: any) => (a.demand_level || "").toLowerCase() === "high").length);
 const examCount = computed(() => items.value.filter((a: any) => a.activity_type === "exam").length);
 
 async function load() {
   loading.value = true;
-  const data = await listActivities();
-  if (data?.code === 200) items.value = data.data.activities || [];
+  if (filterMode.value === "nearby") {
+    const data = await listNearbyActivities(radiusKm.value);
+    if (data?.code === 200) items.value = data.data.activities || [];
+  } else {
+    const data = await listActivities();
+    if (data?.code === 200) items.value = data.data.activities || [];
+  }
   const cData = await listActivityCollectors();
   if (cData?.code === 200) collectors.value = cData.data.collectors || [];
   loading.value = false;
@@ -40,17 +59,15 @@ async function load() {
 
 async function collectNow() {
   collecting.value = true;
-  // Use user's hotel city; fallback to profile hotel_name, then "北京"
   if (!userCity.value) {
     const profileRes = await getProfile();
     if (profileRes?.code === 200 && profileRes.data.hotel_name) {
-      // Extract city from hotel_name (e.g. "北京国贸大酒店" -> "北京")
       const cityMatch = profileRes.data.hotel_name.match(/^[\u4e00-\u9fa5]{2,3}/);
       userCity.value = cityMatch ? cityMatch[0] : profileRes.data.hotel_name;
     }
   }
   const city = userCity.value || "北京";
-  const data = await triggerActivityCollect({ city, radius_km: 3.0 });
+  const data = await triggerActivityCollect({ city, radius_km: radiusKm.value });
   if (data?.code === 202) {
     message.success("采集任务已触发");
     setTimeout(load, 3000);
@@ -70,6 +87,12 @@ async function handleDelete(record: any) {
   }
 }
 
+watch(radiusKm, () => {
+  if (filterMode.value === "nearby") load();
+});
+
+watch(filterMode, () => load());
+
 onMounted(load);
 </script>
 
@@ -78,12 +101,37 @@ onMounted(load);
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px">
       <h2 style="margin: 0">活动监控</h2>
       <Space>
+        <Select v-model:value="filterMode" style="width: 130px">
+          <Select.Option value="nearby">附近活动</Select.Option>
+          <Select.Option value="all">全部活动</Select.Option>
+        </Select>
+        <Select v-if="filterMode === 'nearby'" v-model:value="radiusKm" style="width: 130px">
+          <Select.Option :value="1.0">1 公里内</Select.Option>
+          <Select.Option :value="3.0">3 公里内</Select.Option>
+          <Select.Option :value="5.0">5 公里内</Select.Option>
+          <Select.Option :value="10.0">10 公里内</Select.Option>
+          <Select.Option :value="20.0">20 公里内</Select.Option>
+        </Select>
         <Button @click="load" :loading="loading"><ReloadOutlined /> 刷新</Button>
         <Button type="primary" :loading="collecting" @click="collectNow">
           <ThunderboltOutlined /> 手动采集
         </Button>
       </Space>
     </div>
+
+    <Alert
+      v-if="filterMode === 'nearby'"
+      type="info"
+      show-icon
+      style="margin-bottom: 16px"
+    >
+      <template #message>
+        <Space>
+          <EnvironmentOutlined />
+          <span>显示酒店 {{ radiusKm }} 公里范围内的活动（需配置高德地图 API Key 以获取活动坐标）</span>
+        </Space>
+      </template>
+    </Alert>
 
     <Row :gutter="16" style="margin-bottom: 16px">
       <Col :span="6">

@@ -274,6 +274,30 @@ class ExamCollector(BaseCollector):
     priority = 10
     enabled_by_default = True
 
+    # Major city names for matching in exam addresses
+    CITY_KEYWORDS: dict[str, list[str]] = {
+        "北京": ["北京"],
+        "上海": ["上海"],
+        "广州": ["广州"],
+        "深圳": ["深圳"],
+        "成都": ["成都"],
+        "杭州": ["杭州"],
+        "武汉": ["武汉"],
+        "南京": ["南京"],
+        "重庆": ["重庆"],
+        "西安": ["西安"],
+        "天津": ["天津"],
+        "苏州": ["苏州"],
+        "长沙": ["长沙"],
+        "郑州": ["郑州"],
+        "青岛": ["青岛"],
+        "大连": ["大连"],
+        "厦门": ["厦门"],
+        "济南": ["济南"],
+        "沈阳": ["沈阳"],
+        "昆明": ["昆明"],
+    }
+
     def collect(self, city: str, radius_km: float = 3.0) -> list[RawActivity]:
         """Generate upcoming exams from catalog for current and next year."""
         now = datetime.utcnow()
@@ -298,13 +322,15 @@ class ExamCollector(BaseCollector):
 
                     source_id = self._make_source_id(exam["short"], start.strftime("%Y-%m-%d"))
                     tag_str = "、".join(exam.get("tags", []))
+                    # Generate address with city for filtering; national exams have venues in every major city
+                    address = f"{city}各考点"
                     activities.append(
                         RawActivity(
                             title=f"{year}年{exam['name']}({exam['short']})",
                             description=f"{exam['name']}（{tag_str}），预计报考人数{exam['attendees']:,}人，考试时长{duration}天",
                             start_time=start,
                             end_time=end,
-                            address=f"{city}各考点",
+                            address=address,
                             source=self.name,
                             source_id=source_id,
                             source_url="https://neea.edu.cn/",

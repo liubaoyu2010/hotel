@@ -18,10 +18,15 @@ def filter_by_radius(
     radius_km: float,
     lat_attr: str = "latitude",
     lng_attr: str = "longitude",
+    include_no_coords: bool = False,
 ) -> list:
     """Filter activities within radius_km of center point.
 
-    Activities without coordinates are always included.
+    By default, activities without coordinates are EXCLUDED since we
+    cannot verify they are within the radius. Set include_no_coords=True
+    to include them (useful for backward compatibility or when location
+    filtering is not critical).
+
     Returns list of (activity, distance_km) tuples, sorted by distance.
     """
     results = []
@@ -29,13 +34,15 @@ def filter_by_radius(
         lat = getattr(act, lat_attr, None)
         lng = getattr(act, lng_attr, None)
         if lat is None or lng is None:
-            results.append((act, None))
+            if include_no_coords:
+                results.append((act, None))
             continue
         try:
             lat_f = float(lat)
             lng_f = float(lng)
         except (ValueError, TypeError):
-            results.append((act, None))
+            if include_no_coords:
+                results.append((act, None))
             continue
         dist = distance_km(center_lat, center_lng, lat_f, lng_f)
         if dist <= radius_km:

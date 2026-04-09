@@ -1139,16 +1139,28 @@ def nearby_activities(
 
     items_with_dist = []
     for r in rows:
+        has_coords = r.latitude and r.longitude
         dist = None
-        if hotel_lat and hotel_lng and r.latitude and r.longitude:
+        if hotel_lat and hotel_lng and has_coords:
             try:
                 dist = calc_distance(hotel_lat, hotel_lng, float(r.latitude), float(r.longitude))
             except (ValueError, TypeError):
                 pass
 
-        # Skip if outside radius and we have coordinates
-        if dist is not None and dist > radius_km:
-            continue
+        # When hotel coordinates are set, enforce radius filtering
+        if hotel_lat and hotel_lng:
+            if dist is not None and dist > radius_km:
+                continue
+            if dist is None:
+                # Special handling for exam-type: if address mentions user's city, include
+                if r.activity_type == "exam" and user.hotel_name and r.address:
+                    city_name = user.hotel_name[:2]
+                    if city_name in r.address:
+                        dist = 0.0
+                    else:
+                        continue
+                else:
+                    continue
 
         items_with_dist.append(
             {
