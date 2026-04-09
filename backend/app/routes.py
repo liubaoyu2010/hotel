@@ -1182,3 +1182,24 @@ def nearby_activities(
     # Sort by distance
     items_with_dist.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] or 0))
     return ok({"activities": items_with_dist, "total": len(items_with_dist), "radius_km": radius_km})
+
+
+@router.get("/utils/geocode")
+def geocode_proxy(
+    address: str = Query(..., min_length=2, max_length=500, description="地址文本"),
+    city: str = Query("", max_length=50, description="城市名（可选，提高精度）"),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Proxy geocoding request through backend to avoid exposing API key to frontend."""
+    from app.config import settings
+    from app.services.geocoder import geocode_address
+
+    if not settings.amap_api_key:
+        raise HTTPException(status_code=503, detail="Geocoding service not configured (AMAP_API_KEY missing)")
+
+    result = geocode_address(address, city=city, api_key=settings.amap_api_key)
+    if result is None:
+        return ok({"lat": None, "lng": None, "formatted_address": None})
+
+    lat, lng = result
+    return ok({"lat": lat, "lng": lng, "formatted_address": address})

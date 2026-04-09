@@ -141,6 +141,12 @@ export async function listNearbyActivities(radiusKm: number = 3.0) {
   return request(`/activities/nearby?radius_km=${radiusKm}`);
 }
 
+export async function geocodeAddress(address: string, city?: string) {
+  const params = new URLSearchParams({ address });
+  if (city) params.set("city", city);
+  return request(`/utils/geocode?${params.toString()}`);
+}
+
 export async function triggerActivityCollect(payload: { city?: string; radius_km?: number; collector_name?: string } = {}) {
   return request("/activities/collect", {
     method: "POST",

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, computed, ref } from "vue";
+import { onMounted, computed, ref, nextTick, watch } from "vue";
 import {
   Card,
   Descriptions,
@@ -14,6 +14,7 @@ import {
   message,
   Tooltip,
   Spin,
+  Alert,
 } from "ant-design-vue";
 import {
   UserOutlined,
@@ -23,9 +24,12 @@ import {
   EditOutlined,
   HomeOutlined,
   EnvironmentOutlined,
+  SearchOutlined,
+  AimOutlined,
 } from "@ant-design/icons-vue";
 import { getToken, getUserRole, getApiBase, setApiBase, clearToken } from "../auth";
 import { getProfile, updateProfile } from "../api";
+import AMapLoader from "@amap/amap-jsapi-loader";
 
 const { Title, Text } = Typography;
 
@@ -46,6 +50,17 @@ const saving = ref(false);
 const editing = ref(false);
 const editForm = ref<any>({});
 
+// Map state
+const mapContainer = ref<HTMLDivElement>();
+const searchKeyword = ref("");
+const mapReady = ref(false);
+let AMapRef: any = null;
+let mapInstance: any = null;
+let markerInstance: any = null;
+let geocoder: any = null;
+let placeSearch: any = null;
+let autoComplete: any = null;
+
 async function loadProfile() {
   loading.value = true;
   const data = await getProfile();
@@ -63,6 +78,12 @@ function startEdit() {
     email: profile.value?.email || "",
   };
   editing.value = true;
+  nextTick(() => initMap());
+}
+
+function cancelEdit() {
+  editing.value = false;
+  destroyMap();
 }
 
 async function submitEdit() {
@@ -85,11 +106,162 @@ async function submitEdit() {
   if (data?.code === 200) {
     message.success("资料已更新");
     editing.value = false;
+    destroyMap();
     await loadProfile();
   } else {
     message.error(data?.detail || data?.message || "更新失败");
   }
   saving.value = false;
+}
+
+// ---- Map Functions ----
+async function initMap() {
+  const amapKey = import.meta.env.VITE_AMAP_KEY as string;
+  const amapSecret = import.meta.env.VITE_AMAP_SECRET as string;
+  if (!amapKey) {
+    message.warning("未配置高德地图 Key，地图选址不可用");
+    return;
+  }
+  try {
+    // Set security config before loading
+    (window as any)._AMapSecurityConfig = {
+      securityJsCode: amapSecret,
+    };
+
+    AMapRef = await AMapLoader.load({
+      key: amapKey,
+      version: "2.0",
+      plugins: ["AMap.PlaceSearch", "AMap.AutoComplete", "AMap.Geocoder"],
+    });
+
+    // Determine center
+    let center: [number, number] = [116.397428, 39.90923]; // Beijing default
+    const lat = parseFloat(editForm.value.hotel_lat);
+    const lng = parseFloat(editForm.value.hotel_lng);
+    if (!isNaN(lat) && !isNaN(lng)) {
+      center = [lng, lat]; // AMap uses [lng, lat]
+    }
+
+    mapInstance = new AMapRef.Map(mapContainer.value, {
+      zoom: 14,
+      center,
+      resizeEnable: true,
+    });
+
+    // Geocoder for reverse geocoding
+    geocoder = new AMapRef.Geocoder({ radius: 1000, extensions: "base" });
+
+    // PlaceSearch for address search
+    placeSearch = new AMapRef.PlaceSearch({
+      pageSize: 10,
+      pageIndex: 1,
+      extensions: "base",
+    });
+
+    // Add marker if coords exist
+    if (!isNaN(lat) && !isNaN(lng)) {
+      addMarker(lng, lat);
+    }
+
+    // Map click event
+    mapInstance.on("click", (e: any) => {
+      const { lng: clickLng, lat: clickLat } = e.lnglat;
+      addMarker(clickLng, clickLat);
+      editForm.value.hotel_lat = clickLat.toFixed(6);
+      editForm.value.hotel_lng = clickLng.toFixed(6);
+      // Reverse geocode to get address
+      geocoder.getAddress([clickLng, clickLat], (status: string, result: any) => {
+        if (status === "complete" && result.info === "OK") {
+          const addr = result.regeocode.formattedAddress || "";
+          if (addr && !editForm.value.hotel_name) {
+            editForm.value.hotel_name = addr;
+          }
+        }
+      });
+    });
+
+    mapReady.value = true;
+  } catch (err: any) {
+    console.error("AMap load failed:", err);
+    message.error("地图加载失败: " + (err.message || "未知错误"));
+  }
+}
+
+function addMarker(lng: number, lat: number) {
+  if (!AMapRef || !mapInstance) return;
+  if (markerInstance) {
+    markerInstance.setPosition([lng, lat]);
+  } else {
+    markerInstance = new AMapRef.Marker({
+      position: [lng, lat],
+      draggable: true,
+    });
+    markerInstance.setMap(mapInstance);
+
+    // Drag end event
+    markerInstance.on("dragend", (e: any) => {
+      const pos = markerInstance.getPosition();
+      editForm.value.hotel_lat = pos.lat.toFixed(6);
+      editForm.value.hotel_lng = pos.getLng().toFixed ? pos.getLng().toFixed(6) : pos.lng.toFixed(6);
+      editForm.value.hotel_lat = pos.lat.toFixed(6);
+      editForm.value.hotel_lng = pos.lng.toFixed(6);
+    });
+  }
+  mapInstance.setCenter([lng, lat]);
+}
+
+function searchPlace() {
+  if (!placeSearch || !searchKeyword.value.trim()) return;
+  placeSearch.search(searchKeyword.value, (status: string, result: any) => {
+    if (status === "complete" && result.poiList?.pois?.length) {
+      const poi = result.poiList.pois[0];
+      const location = poi.location;
+      addMarker(location.lng, location.lat);
+      editForm.value.hotel_lat = location.lat.toFixed(6);
+      editForm.value.hotel_lng = location.lng.toFixed(6);
+      if (poi.name) {
+        editForm.value.hotel_name = poi.name;
+      }
+      mapInstance.setZoomAndCenter(15, [location.lng, location.lat]);
+      message.success(`已定位到: ${poi.name}`);
+    } else {
+      message.warning("未找到匹配地址");
+    }
+  });
+}
+
+function locateMe() {
+  if (!mapInstance) return;
+  mapInstance.plugin("AMap.Geolocation", () => {
+    const geolocation = new AMapRef.Geolocation({
+      enableHighAccuracy: true,
+      timeout: 10000,
+    });
+    geolocation.getCurrentPosition((status: string, result: any) => {
+      if (status === "complete") {
+        const { lng, lat } = result.position;
+        addMarker(lng, lat);
+        editForm.value.hotel_lat = lat.toFixed(6);
+        editForm.value.hotel_lng = lng.toFixed(6);
+        mapInstance.setCenter([lng, lat]);
+        message.success("已定位到当前位置");
+      } else {
+        message.warning("定位失败，请手动搜索或点击地图");
+      }
+    });
+  });
+}
+
+function destroyMap() {
+  if (mapInstance) {
+    mapInstance.destroy();
+    mapInstance = null;
+  }
+  markerInstance = null;
+  AMapRef = null;
+  geocoder = null;
+  placeSearch = null;
+  mapReady.value = false;
 }
 
 function copyToken() {
@@ -139,6 +311,7 @@ onMounted(loadProfile);
             <Button v-if="!editing" type="link" @click="startEdit"><EditOutlined /> 编辑</Button>
           </template>
 
+          <!-- View mode -->
           <template v-if="!editing">
             <Descriptions :column="2" bordered size="middle">
               <DescriptionsItem label="用户名">{{ profile.username }}</DescriptionsItem>
@@ -172,6 +345,7 @@ onMounted(loadProfile);
             </Descriptions>
           </template>
 
+          <!-- Edit mode with map -->
           <template v-else>
             <Form layout="vertical">
               <Row :gutter="16">
@@ -188,22 +362,58 @@ onMounted(loadProfile);
                   </FormItem>
                 </Col>
               </Row>
-              <Row :gutter="16">
-                <Col :span="12">
-                  <FormItem label="纬度 (lat)">
-                    <Input v-model:value="editForm.hotel_lat" placeholder="如：39.9042" />
-                  </FormItem>
-                </Col>
-                <Col :span="12">
-                  <FormItem label="经度 (lng)">
-                    <Input v-model:value="editForm.hotel_lng" placeholder="如：116.4074" />
-                  </FormItem>
-                </Col>
-              </Row>
+
+              <!-- Map location picker -->
+              <FormItem label="酒店位置">
+                <Alert
+                  message="搜索地址或点击地图选择酒店位置，坐标将自动填充"
+                  type="info"
+                  show-icon
+                  style="margin-bottom: 12px"
+                />
+                <Space style="margin-bottom: 12px; width: 100%">
+                  <Input
+                    v-model:value="searchKeyword"
+                    placeholder="搜索地址，如：北京国贸大酒店"
+                    @pressEnter="searchPlace"
+                    style="width: 300px"
+                  >
+                    <template #prefix><SearchOutlined /></template>
+                  </Input>
+                  <Button type="primary" @click="searchPlace" :disabled="!mapReady">
+                    <template #icon><SearchOutlined /></template>
+                    搜索
+                  </Button>
+                  <Button @click="locateMe" :disabled="!mapReady">
+                    <template #icon><AimOutlined /></template>
+                    定位我
+                  </Button>
+                </Space>
+
+                <!-- AMap container -->
+                <div
+                  ref="mapContainer"
+                  style="width: 100%; height: 400px; border: 1px solid #d9d9d9; border-radius: 8px; margin-bottom: 12px"
+                ></div>
+
+                <Row :gutter="16">
+                  <Col :span="12">
+                    <FormItem label="纬度 (lat)">
+                      <Input v-model:value="editForm.hotel_lat" placeholder="如：39.9042" />
+                    </FormItem>
+                  </Col>
+                  <Col :span="12">
+                    <FormItem label="经度 (lng)">
+                      <Input v-model:value="editForm.hotel_lng" placeholder="如：116.4074" />
+                    </FormItem>
+                  </Col>
+                </Row>
+              </FormItem>
+
               <FormItem>
                 <Space>
                   <Button type="primary" @click="submitEdit" :loading="saving">保存</Button>
-                  <Button @click="editing = false">取消</Button>
+                  <Button @click="cancelEdit">取消</Button>
                 </Space>
               </FormItem>
             </Form>
