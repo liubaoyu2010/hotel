@@ -22,6 +22,7 @@ _load_env_file()
 class Settings:
     app_name: str = "Hotel Monitor API"
     app_version: str = "0.2.0"
+    app_port: int = int(os.getenv("APP_PORT", "8000"))
     jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "dev-secret-change-me")
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = int(os.getenv("JWT_EXPIRE_MINUTES", "720"))
@@ -31,8 +32,17 @@ class Settings:
     auto_create_tables: bool = os.getenv("AUTO_CREATE_TABLES", "false").lower() == "true"
     ai_provider: str = os.getenv("AI_PROVIDER", "mock")
     ai_api_key: str = os.getenv("AI_API_KEY", "")
+    ai_base_url: str = os.getenv("AI_BASE_URL", "https://api.deepseek.com")
+    ai_model: str = os.getenv("AI_MODEL", "deepseek-chat")
     push_channel: str = os.getenv("PUSH_CHANNEL", "console")
     push_webhook_url: str = os.getenv("PUSH_WEBHOOK_URL", "")
+    push_serverchan_key: str = os.getenv("PUSH_SERVERCHAN_KEY", "")
+    push_wxpusher_token: str = os.getenv("PUSH_WXPUSHER_TOKEN", "")
+    push_wxpusher_uids: str = os.getenv("PUSH_WXPUSHER_UIDS", "")
+    activity_collect_enabled: bool = os.getenv("ACTIVITY_COLLECT_ENABLED", "true").lower() == "true"
+    activity_default_radius_km: float = float(os.getenv("ACTIVITY_DEFAULT_RADIUS_KM", "3.0"))
+    activity_city_override: str = os.getenv("ACTIVITY_CITY_OVERRIDE", "")
+    amap_api_key: str = os.getenv("AMAP_API_KEY", "")
 
     def validate(self) -> None:
         if not self.jwt_secret_key or self.jwt_secret_key == "dev-secret-change-me":

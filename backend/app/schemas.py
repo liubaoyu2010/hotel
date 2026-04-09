@@ -69,6 +69,16 @@ class ActivityCreateRequest(BaseModel):
     activity_type: str
     demand_level: str
     demand_score: float | None = None
+    source_id: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    estimated_attendees: int | None = None
+
+
+class ActivityCollectRequest(BaseModel):
+    collector_name: str | None = None
+    city: str | None = None
+    radius_km: float = 3.0
 
 
 class AlertRuleCreateRequest(BaseModel):
@@ -84,6 +94,13 @@ class AlertRuleUpdateRequest(BaseModel):
     is_active: bool | None = None
 
 
+class CompetitorUpdateRequest(BaseModel):
+    name: str | None = None
+    external_id: str | None = None
+    room_types: list[str] | None = None
+    is_active: bool | None = None
+
+
 class CompetitorAliasUpsertRequest(BaseModel):
     alias_map: dict[str, str]
 
@@ -91,6 +108,13 @@ class CompetitorAliasUpsertRequest(BaseModel):
 class UserRoleUpdateRequest(BaseModel):
     role: str
     is_active: bool | None = None
+
+
+class ProfileUpdateRequest(BaseModel):
+    hotel_name: str | None = None
+    hotel_lat: float | None = None
+    hotel_lng: float | None = None
+    email: str | None = None
 
 
 class DashboardSummaryRequest(BaseModel):

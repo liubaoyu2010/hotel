@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -83,10 +83,14 @@ class SurroundingActivity(Base):
     end_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     address: Mapped[str | None] = mapped_column(String(500))
     source: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_id: Mapped[str | None] = mapped_column(String(255))
     source_url: Mapped[str | None] = mapped_column(String(500))
     activity_type: Mapped[str] = mapped_column(String(50), nullable=False)
     demand_level: Mapped[str] = mapped_column(String(20), nullable=False)
     demand_score: Mapped[float | None] = mapped_column(Numeric(3, 2))
+    latitude: Mapped[str | None] = mapped_column(String(32))
+    longitude: Mapped[str | None] = mapped_column(String(32))
+    estimated_attendees: Mapped[int | None] = mapped_column(Integer)
     collected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

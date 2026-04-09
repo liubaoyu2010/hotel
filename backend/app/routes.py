@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -9,23 +10,44 @@ from app.db import get_db
 from app.deps import get_current_user, require_admin
 from app.models import CompetitorHotel, ExtensionDevice, PriceTimeSeries, User
 from app.schemas import (
+    ActivityCollectRequest,
     ActivityCreateRequest,
     AlertRuleCreateRequest,
     AlertRuleUpdateRequest,
     CompetitorAliasUpsertRequest,
     CompetitorCreateRequest,
+    CompetitorUpdateRequest,
     ExtensionRegisterRequest,
     ExtensionReportRequest,
     LoginRequest,
+    ProfileUpdateRequest,
     RegisterRequest,
     UserRoleUpdateRequest,
 )
 from app.models import AIReport, AlertRecord, AlertRule, AuditLog, CompetitorAlias, PushDelivery, SurroundingActivity
 from app.security import create_access_token, hash_password, verify_password
-from app.tasks import alert_check_task, generate_weekly_report_task, push_daily_digest_all_users
+from app.tasks import alert_check_task, collect_activities_task, generate_weekly_report_task, push_daily_digest_all_users
 from app.celery_app import celery_app
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1")
+
+
+def safe_delay(task, *args, **kwargs):
+    """Try to dispatch task via Celery; fall back to synchronous if broker is down."""
+    from app.config import settings
+    if settings.celery_eager:
+        result = task(*args, **kwargs)
+        # Return a simple object with .id for compatibility with AsyncResult
+        return type("SyncResult", (), {"id": "sync-" + str(uuid4()), "result": result})()
+    try:
+        job = task.delay(*args, **kwargs)
+        return job
+    except Exception as exc:
+        logger.warning("Celery broker unavailable, running task synchronously: %s", exc)
+        result = task(*args, **kwargs)
+        return type("SyncResult", (), {"id": "sync-" + str(uuid4()), "result": result})()
 
 
 def ok(data: dict) -> dict:
@@ -92,6 +114,60 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> dict:
     )
 
 
+@router.get("/profile")
+def get_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    return ok(
+        {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "hotel_name": user.hotel_name,
+            "hotel_lat": user.hotel_lat,
+            "hotel_lng": user.hotel_lng,
+            "is_active": user.is_active,
+            "created_at": user.created_at.isoformat() + "Z",
+        }
+    )
+
+
+@router.put("/profile")
+def update_profile(
+    payload: ProfileUpdateRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
+) -> dict:
+    if payload.hotel_name is not None:
+        user.hotel_name = payload.hotel_name
+    if payload.hotel_lat is not None:
+        user.hotel_lat = str(payload.hotel_lat)
+    if payload.hotel_lng is not None:
+        user.hotel_lng = str(payload.hotel_lng)
+    if payload.email is not None:
+        existing = db.query(User).filter(User.email == payload.email, User.id != user.id).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already in use")
+        user.email = payload.email
+    write_audit_log(
+        db=db,
+        actor=user,
+        action="update",
+        resource_type="profile",
+        resource_id=user.id,
+    )
+    db.commit()
+    db.refresh(user)
+    return ok(
+        {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "hotel_name": user.hotel_name,
+            "hotel_lat": user.hotel_lat,
+            "hotel_lng": user.hotel_lng,
+        }
+    )
+
+
 @router.post("/competitors")
 def create_competitor(
     payload: CompetitorCreateRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
@@ -150,6 +226,78 @@ def list_competitors(user: User = Depends(get_current_user), db: Session = Depen
             ]
         }
     )
+
+
+@router.put("/competitors/{competitor_id}")
+def update_competitor(
+    competitor_id: str,
+    payload: CompetitorUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    competitor = (
+        db.query(CompetitorHotel)
+        .filter(CompetitorHotel.id == competitor_id, CompetitorHotel.user_id == user.id)
+        .first()
+    )
+    if not competitor:
+        raise HTTPException(status_code=404, detail="Competitor not found")
+    if payload.name is not None:
+        competitor.name = payload.name
+    if payload.external_id is not None:
+        competitor.external_id = payload.external_id
+    if payload.room_types is not None:
+        competitor.room_types = json.dumps(payload.room_types, ensure_ascii=False)
+    if payload.is_active is not None:
+        competitor.is_active = payload.is_active
+    write_audit_log(
+        db=db,
+        actor=user,
+        action="update",
+        resource_type="competitor",
+        resource_id=competitor.id,
+        metadata={"name": competitor.name, "is_active": competitor.is_active},
+    )
+    db.commit()
+    db.refresh(competitor)
+    return ok(
+        {
+            "id": competitor.id,
+            "name": competitor.name,
+            "platform": competitor.platform,
+            "external_id": competitor.external_id,
+            "room_types": json.loads(competitor.room_types),
+            "is_active": competitor.is_active,
+        }
+    )
+
+
+@router.delete("/competitors/{competitor_id}")
+def delete_competitor(
+    competitor_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    competitor = (
+        db.query(CompetitorHotel)
+        .filter(CompetitorHotel.id == competitor_id, CompetitorHotel.user_id == user.id)
+        .first()
+    )
+    if not competitor:
+        raise HTTPException(status_code=404, detail="Competitor not found")
+    # Delete related price records first
+    db.query(PriceTimeSeries).filter(PriceTimeSeries.competitor_hotel_id == competitor.id).delete()
+    write_audit_log(
+        db=db,
+        actor=user,
+        action="delete",
+        resource_type="competitor",
+        resource_id=competitor.id,
+        metadata={"name": competitor.name, "platform": competitor.platform},
+    )
+    db.delete(competitor)
+    db.commit()
+    return ok({"deleted": True, "id": competitor_id})
 
 
 @router.get("/competitors/{competitor_id}/price-history")
@@ -287,7 +435,7 @@ def extension_report(
         processed += 1
     matched.last_collect_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
-    job = alert_check_task.delay(user_id=matched.user_id, processed_count=processed)
+    job = safe_delay(alert_check_task, user_id=matched.user_id, processed_count=processed)
     return ok(
         {
             "received": True,
@@ -300,32 +448,6 @@ def extension_report(
     )
 
 
-@router.get("/dashboard/price-overview")
-def dashboard_price_overview(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
-    competitors = db.query(CompetitorHotel).filter(CompetitorHotel.user_id == user.id).all()
-    competitor_ids = [c.id for c in competitors]
-    prices = []
-    if competitor_ids:
-        prices = db.query(PriceTimeSeries).filter(PriceTimeSeries.competitor_hotel_id.in_(competitor_ids)).all()
-    values = [float(p.price) for p in prices]
-    summary = {
-        "total_competitors": len(competitors),
-        "price_change_today": 0.0,
-        "avg_price": round(sum(values) / len(values), 2) if values else 0.0,
-        "lowest_price": min(values) if values else 0.0,
-        "highest_price": max(values) if values else 0.0,
-    }
-    return ok(
-        {
-            "summary": summary,
-            "trends": [],
-            "competitors": [],
-            "alerts": [],
-            "extension_status": {"status": "online", "last_collect_at": None},
-        }
-    )
-
-
 @router.get("/dashboard/overview")
 def dashboard_overview(
     days: int = Query(default=7, ge=1, le=30),
@@ -334,6 +456,7 @@ def dashboard_overview(
 ) -> dict:
     competitors = db.query(CompetitorHotel).filter(CompetitorHotel.user_id == user.id).all()
     competitor_ids = [c.id for c in competitors]
+    competitor_name_map = {c.id: c.name for c in competitors}
     alerts_count = db.query(AlertRecord).filter(AlertRecord.user_id == user.id).count()
     activities_count = db.query(SurroundingActivity).count()
     device_count = db.query(ExtensionDevice).filter(ExtensionDevice.user_id == user.id).count()
@@ -341,6 +464,67 @@ def dashboard_overview(
     if competitor_ids:
         prices = db.query(PriceTimeSeries).filter(PriceTimeSeries.competitor_hotel_id.in_(competitor_ids)).all()
     values = [float(p.price) for p in prices]
+
+    # --- Price trend: daily avg per competitor over last N days ---
+    from collections import defaultdict
+    from datetime import timedelta
+
+    now = datetime.utcnow()
+    since = now - timedelta(days=days)
+    price_rows = (
+        db.query(PriceTimeSeries)
+        .filter(
+            PriceTimeSeries.competitor_hotel_id.in_(competitor_ids),
+            PriceTimeSeries.captured_at >= since,
+        )
+        .order_by(PriceTimeSeries.captured_at.asc())
+        .all()
+    ) if competitor_ids else []
+
+    # Build date list
+    date_labels = []
+    d = since
+    while d <= now:
+        date_labels.append(d.strftime("%m-%d"))
+        d += timedelta(days=1)
+
+    # Group by (competitor_id, date) -> avg price
+    price_by_comp_date: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for r in price_rows:
+        day_key = r.captured_at.strftime("%m-%d")
+        price_by_comp_date[r.competitor_hotel_id][day_key].append(float(r.price))
+
+    price_trends = []
+    for cid in competitor_ids:
+        name = competitor_name_map.get(cid, cid[:8])
+        daily_avg: dict[str, float] = {}
+        for dk, pvals in price_by_comp_date.get(cid, {}).items():
+            daily_avg[dk] = round(sum(pvals) / len(pvals), 2)
+        price_trends.append({
+            "competitor_id": cid,
+            "name": name,
+            "dates": date_labels,
+            "values": [daily_avg.get(d) for d in date_labels],
+        })
+
+    # --- Alert trend: daily count over last N days ---
+    alert_rows = (
+        db.query(AlertRecord)
+        .filter(AlertRecord.user_id == user.id, AlertRecord.created_at >= since)
+        .all()
+    )
+    alert_by_date: dict[str, int] = defaultdict(int)
+    for r in alert_rows:
+        alert_by_date[r.created_at.strftime("%m-%d")] += 1
+    alert_trend = [{"date": d, "count": alert_by_date.get(d, 0)} for d in date_labels]
+
+    # --- Activity trend: daily count by start_time over last N days ---
+    activity_rows = db.query(SurroundingActivity).filter(SurroundingActivity.start_time >= since).all()
+    activity_by_date: dict[str, int] = defaultdict(int)
+    for r in activity_rows:
+        activity_by_date[r.start_time.strftime("%m-%d")] += 1
+    activity_trend = [{"date": d, "count": activity_by_date.get(d, 0)} for d in date_labels]
+
     return ok(
         {
             "days": days,
@@ -351,6 +535,9 @@ def dashboard_overview(
                 "total_devices": device_count,
                 "avg_price": round(sum(values) / len(values), 2) if values else 0.0,
             },
+            "price_trends": price_trends,
+            "alert_trend": alert_trend,
+            "activity_trend": activity_trend,
             "latest_report": _latest_report(db, user.id),
             "push_stats": _push_stats(db, user.id),
         }
@@ -411,9 +598,14 @@ def activities_calendar(
             "end_time": r.end_time.isoformat() + "Z",
             "address": r.address,
             "source": r.source,
+            "source_id": r.source_id,
+            "source_url": r.source_url,
             "activity_type": r.activity_type,
             "demand_level": r.demand_level,
             "demand_score": float(r.demand_score) if r.demand_score is not None else None,
+            "latitude": r.latitude,
+            "longitude": r.longitude,
+            "estimated_attendees": r.estimated_attendees,
         }
         for r in rows
     ]
@@ -431,15 +623,41 @@ def create_activity(
         end_time=payload.end_time.replace(tzinfo=None),
         address=payload.address,
         source=payload.source,
+        source_id=payload.source_id,
         source_url=payload.source_url,
         activity_type=payload.activity_type,
         demand_level=payload.demand_level,
         demand_score=payload.demand_score,
+        latitude=str(payload.latitude) if payload.latitude else None,
+        longitude=str(payload.longitude) if payload.longitude else None,
+        estimated_attendees=payload.estimated_attendees,
     )
     db.add(row)
     db.commit()
     db.refresh(row)
     return {"code": 201, "message": "created", "data": {"id": row.id, "title": row.title}}
+
+
+@router.delete("/activities/{activity_id}")
+def delete_activity(
+    activity_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    row = db.query(SurroundingActivity).filter(SurroundingActivity.id == activity_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    db.delete(row)
+    write_audit_log(
+        db=db,
+        actor=user,
+        action="delete",
+        resource_type="activity",
+        resource_id=activity_id,
+        metadata={"title": row.title, "source": row.source},
+    )
+    db.commit()
+    return ok({"deleted": True, "id": activity_id})
 
 
 @router.post("/alert-rules")
@@ -628,7 +846,16 @@ def list_weekly_reports(
 
 @router.post("/reports/weekly/generate")
 def generate_weekly_report(user: User = Depends(get_current_user)) -> dict:
-    result = generate_weekly_report_task(user.id)
+    result = safe_delay(generate_weekly_report_task, user.id)
+    if hasattr(result, "id"):
+        return {
+            "code": 202,
+            "message": "accepted",
+            "data": {
+                "task_id": result.id,
+                "task_status_endpoint": f"/api/v1/tasks/status/{result.id}",
+            },
+        }
     return {"code": 200, "message": "success", "data": result}
 
 
@@ -829,7 +1056,7 @@ def upsert_competitor_aliases(
 def trigger_alert_check(
     processed_count: int = 0, user: User = Depends(get_current_user)
 ) -> dict:
-    job = alert_check_task.delay(user_id=user.id, processed_count=processed_count)
+    job = safe_delay(alert_check_task, user_id=user.id, processed_count=processed_count)
     return {"code": 202, "message": "accepted", "data": {"task_id": job.id}}
 
 
@@ -845,3 +1072,100 @@ def task_status(task_id: str, user: User = Depends(get_current_user)) -> dict:
             payload["result"] = str(result.result)
     payload["user_id"] = user.id
     return ok(payload)
+
+
+@router.post("/activities/collect")
+def trigger_activity_collection(
+    payload: ActivityCollectRequest,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Manually trigger activity collection for the current user."""
+    from app.config import settings
+
+    city = payload.city or settings.activity_city_override or user.hotel_name or "北京"
+    job = safe_delay(collect_activities_task,
+        user_id=user.id,
+        city=city,
+        radius_km=payload.radius_km,
+        collector_name=payload.collector_name,
+    )
+    return {
+        "code": 202,
+        "message": "accepted",
+        "data": {
+            "task_id": job.id,
+            "task_status_endpoint": f"/api/v1/tasks/status/{job.id}",
+            "city": city,
+            "radius_km": payload.radius_km,
+            "collector_name": payload.collector_name,
+        },
+    }
+
+
+@router.get("/activities/collectors")
+def list_activity_collectors(user: User = Depends(get_current_user)) -> dict:
+    """List all available activity collectors and their status."""
+    from app.collectors.registry import list_available_collectors
+
+    collectors = list_available_collectors()
+    return ok({"collectors": collectors, "total": len(collectors)})
+
+
+@router.get("/activities/nearby")
+def nearby_activities(
+    radius_km: float = Query(default=3.0, ge=0.1, le=50.0),
+    demand_level: str | None = Query(default=None),
+    activity_type: str | None = Query(default=None),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Query activities near the user's hotel, sorted by distance."""
+    from app.services.geo import distance_km as calc_distance
+
+    hotel_lat = None
+    hotel_lng = None
+    try:
+        hotel_lat = float(user.hotel_lat) if user.hotel_lat else None
+        hotel_lng = float(user.hotel_lng) if user.hotel_lng else None
+    except (ValueError, TypeError):
+        pass
+
+    query = db.query(SurroundingActivity)
+    if demand_level:
+        query = query.filter(SurroundingActivity.demand_level == demand_level)
+    if activity_type:
+        query = query.filter(SurroundingActivity.activity_type == activity_type)
+    rows = query.order_by(SurroundingActivity.start_time.asc()).all()
+
+    items_with_dist = []
+    for r in rows:
+        dist = None
+        if hotel_lat and hotel_lng and r.latitude and r.longitude:
+            try:
+                dist = calc_distance(hotel_lat, hotel_lng, float(r.latitude), float(r.longitude))
+            except (ValueError, TypeError):
+                pass
+
+        # Skip if outside radius and we have coordinates
+        if dist is not None and dist > radius_km:
+            continue
+
+        items_with_dist.append(
+            {
+                "id": r.id,
+                "title": r.title,
+                "start_time": r.start_time.isoformat() + "Z",
+                "end_time": r.end_time.isoformat() + "Z",
+                "address": r.address,
+                "source": r.source,
+                "activity_type": r.activity_type,
+                "demand_level": r.demand_level,
+                "demand_score": float(r.demand_score) if r.demand_score is not None else None,
+                "distance_km": round(dist, 2) if dist is not None else None,
+                "estimated_attendees": r.estimated_attendees,
+            }
+        )
+
+    # Sort by distance
+    items_with_dist.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] or 0))
+    return ok({"activities": items_with_dist, "total": len(items_with_dist), "radius_km": radius_km})

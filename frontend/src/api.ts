@@ -34,6 +34,7 @@ async function request(path: string, init: RequestInit = {}) {
   }
 }
 
+// Auth
 export async function apiLogin(username: string, password: string) {
   return request("/auth/login", {
     method: "POST",
@@ -56,63 +57,142 @@ export async function apiRegister(payload: {
   });
 }
 
-export async function createCompetitor(name: string, externalId: string) {
+// Competitors
+export async function createCompetitor(name: string, externalId: string, roomTypes: string[] = ["豪华大床房"]) {
   return request("/competitors", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({
-      name,
-      platform: "meituan",
-      external_id: externalId,
-      room_types: ["豪华大床房"],
-    }),
+    body: JSON.stringify({ name, platform: "meituan", external_id: externalId, room_types: roomTypes }),
   });
 }
 
 export async function listCompetitors() {
-  return request("/competitors", { headers: authHeaders() });
+  return request("/competitors");
 }
 
-export async function createActivity(title: string) {
+export async function getCompetitorPriceHistory(competitorId: string, startTime?: string, endTime?: string) {
+  const params = new URLSearchParams();
+  if (startTime) params.set("start_time", startTime);
+  if (endTime) params.set("end_time", endTime);
+  const qs = params.toString();
+  return request(`/competitors/${competitorId}/price-history${qs ? "?" + qs : ""}`);
+}
+
+export async function updateCompetitor(competitorId: string, payload: { name?: string; external_id?: string; room_types?: string[]; is_active?: boolean }) {
+  return request(`/competitors/${competitorId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCompetitor(competitorId: string) {
+  return request(`/competitors/${competitorId}`, { method: "DELETE" });
+}
+
+// Profile
+export async function getProfile() {
+  return request("/profile");
+}
+
+export async function updateProfile(payload: { hotel_name?: string; hotel_lat?: number; hotel_lng?: number; email?: string }) {
+  return request("/profile", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+}
+
+// Competitor Aliases
+export async function listCompetitorAliases() {
+  return request("/competitor-aliases");
+}
+
+export async function upsertCompetitorAliases(aliasMap: Record<string, string>) {
+  return request("/competitor-aliases", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ alias_map: aliasMap }),
+  });
+}
+
+// Activities
+export async function createActivity(payload: any) {
   return request("/activities", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({
-      title,
-      start_time: "2026-05-01T09:00:00Z",
-      end_time: "2026-05-03T18:00:00Z",
-      source: "fairchina",
-      activity_type: "exhibition",
-      demand_level: "HIGH",
-      demand_score: 0.9,
-    }),
+    body: JSON.stringify(payload),
   });
 }
 
-export async function listActivities() {
-  return request("/activities/calendar", { headers: authHeaders() });
+export async function deleteActivity(activityId: string) {
+  return request(`/activities/${activityId}`, { method: "DELETE" });
 }
 
-export async function createAlertRule(name: string, threshold: number) {
+export async function listActivities(startDate?: string, endDate?: string) {
+  const params = new URLSearchParams();
+  if (startDate) params.set("start_date", startDate);
+  if (endDate) params.set("end_date", endDate);
+  const qs = params.toString();
+  return request(`/activities/calendar${qs ? "?" + qs : ""}`);
+}
+
+export async function listNearbyActivities(radiusKm: number = 3.0) {
+  return request(`/activities/nearby?radius_km=${radiusKm}`);
+}
+
+export async function triggerActivityCollect(payload: { city?: string; radius_km?: number; collector_name?: string } = {}) {
+  return request("/activities/collect", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function listActivityCollectors() {
+  return request("/activities/collectors");
+}
+
+// Alerts
+export async function createAlertRule(name: string, threshold: number, ruleType: string = "price_drop") {
   return request("/alert-rules", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ name, rule_type: "price_drop", threshold, is_active: true }),
+    body: JSON.stringify({ name, rule_type: ruleType, threshold, is_active: true }),
   });
-}
-
-export async function listNotifications() {
-  return request("/notifications", { headers: authHeaders() });
 }
 
 export async function listAlertRules() {
   return request("/alert-rules");
 }
 
-export async function dashboardOverview() {
-  return request("/dashboard/overview");
+export async function updateAlertRule(ruleId: string, payload: { name?: string; threshold?: number; is_active?: boolean }) {
+  return request(`/alert-rules/${ruleId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
 }
 
+export async function deleteAlertRule(ruleId: string) {
+  return request(`/alert-rules/${ruleId}`, { method: "DELETE" });
+}
+
+export async function listAlertRecords() {
+  return request("/alerts");
+}
+
+// Notifications
+export async function listNotifications(page = 1, pageSize = 20) {
+  return request(`/notifications?page=${page}&page_size=${pageSize}`);
+}
+
+// Dashboard
+export async function dashboardOverview(days = 7) {
+  return request(`/dashboard/overview?days=${days}`);
+}
+
+// Reports
 export async function listWeeklyReports(page = 1, pageSize = 10) {
   return request(`/reports/weekly?page=${page}&page_size=${pageSize}`);
 }
@@ -121,6 +201,7 @@ export async function generateWeeklyReport() {
   return request("/reports/weekly/generate", { method: "POST" });
 }
 
+// Extension
 export async function listExtensionDevices() {
   return request("/extension/devices");
 }
@@ -129,6 +210,7 @@ export async function listExtensionReports(page = 1, pageSize = 20) {
   return request(`/extension/reports?page=${page}&page_size=${pageSize}`);
 }
 
+// System
 export async function listSystemUsers() {
   return request("/system/users");
 }

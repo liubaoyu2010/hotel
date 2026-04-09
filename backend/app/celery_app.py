@@ -21,5 +21,9 @@ celery_app.conf.update(
             "task": "tasks.push_daily_digest_all_users",
             "schedule": crontab(minute=0, hour=9),
         },
+        "collect-activities-daily-06": {
+            "task": "tasks.collect_activities_all_users",
+            "schedule": crontab(minute=0, hour=6),
+        },
     },
 )

@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   postgres:
     image: postgres:16
@@ -31,13 +29,28 @@ services:
       context: ./backend
     container_name: hotel_monitor_backend
     environment:
+      APP_ENV: prod
       DATABASE_URL: postgresql+psycopg://hotel:hotel@postgres:5432/hotel_monitor
-      JWT_SECRET_KEY: dev-secret-change-me
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-me}
       JWT_EXPIRE_MINUTES: 720
       REDIS_URL: redis://redis:6379/0
       CELERY_TASK_ALWAYS_EAGER: "false"
+      AUTO_CREATE_TABLES: "false"
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+      AI_MODEL: ${AI_MODEL:-deepseek-chat}
+      PUSH_CHANNEL: ${PUSH_CHANNEL:-console}
+      PUSH_SERVERCHAN_KEY: ${PUSH_SERVERCHAN_KEY:-}
+      PUSH_WXPUSHER_TOKEN: ${PUSH_WXPUSHER_TOKEN:-}
+      PUSH_WXPUSHER_UIDS: ${PUSH_WXPUSHER_UIDS:-}
+      PUSH_WEBHOOK_URL: ${PUSH_WEBHOOK_URL:-}
+      ACTIVITY_COLLECT_ENABLED: ${ACTIVITY_COLLECT_ENABLED:-true}
+      ACTIVITY_DEFAULT_RADIUS_KM: ${ACTIVITY_DEFAULT_RADIUS_KM:-3.0}
+      ACTIVITY_CITY_OVERRIDE: ${ACTIVITY_CITY_OVERRIDE:-}
+      AMAP_API_KEY: ${AMAP_API_KEY:-}
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,16 +63,70 @@ services:
     container_name: hotel_monitor_celery_worker
     command: celery -A app.celery_app.celery_app worker --loglevel=info
     environment:
+      APP_ENV: prod
       DATABASE_URL: postgresql+psycopg://hotel:hotel@postgres:5432/hotel_monitor
-      JWT_SECRET_KEY: dev-secret-change-me
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-me}
       JWT_EXPIRE_MINUTES: 720
       REDIS_URL: redis://redis:6379/0
       CELERY_TASK_ALWAYS_EAGER: "false"
+      AUTO_CREATE_TABLES: "false"
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+      AI_MODEL: ${AI_MODEL:-deepseek-chat}
+      PUSH_CHANNEL: ${PUSH_CHANNEL:-console}
+      PUSH_SERVERCHAN_KEY: ${PUSH_SERVERCHAN_KEY:-}
+      PUSH_WXPUSHER_TOKEN: ${PUSH_WXPUSHER_TOKEN:-}
+      PUSH_WXPUSHER_UIDS: ${PUSH_WXPUSHER_UIDS:-}
+      PUSH_WEBHOOK_URL: ${PUSH_WEBHOOK_URL:-}
+      ACTIVITY_COLLECT_ENABLED: ${ACTIVITY_COLLECT_ENABLED:-true}
+      ACTIVITY_DEFAULT_RADIUS_KM: ${ACTIVITY_DEFAULT_RADIUS_KM:-3.0}
+      ACTIVITY_CITY_OVERRIDE: ${ACTIVITY_CITY_OVERRIDE:-}
+      AMAP_API_KEY: ${AMAP_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_started
+
+  celery_beat:
+    build:
+      context: ./backend
+    container_name: hotel_monitor_celery_beat
+    command: celery -A app.celery_app.celery_app beat --loglevel=info
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: postgresql+psycopg://hotel:hotel@postgres:5432/hotel_monitor
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-secret-change-me}
+      JWT_EXPIRE_MINUTES: 720
+      REDIS_URL: redis://redis:6379/0
+      CELERY_TASK_ALWAYS_EAGER: "false"
+      AUTO_CREATE_TABLES: "false"
+      AI_PROVIDER: ${AI_PROVIDER:-mock}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+      AI_MODEL: ${AI_MODEL:-deepseek-chat}
+      PUSH_CHANNEL: ${PUSH_CHANNEL:-console}
+      PUSH_SERVERCHAN_KEY: ${PUSH_SERVERCHAN_KEY:-}
+      PUSH_WXPUSHER_TOKEN: ${PUSH_WXPUSHER_TOKEN:-}
+      PUSH_WXPUSHER_UIDS: ${PUSH_WXPUSHER_UIDS:-}
+      PUSH_WEBHOOK_URL: ${PUSH_WEBHOOK_URL:-}
+      ACTIVITY_COLLECT_ENABLED: ${ACTIVITY_COLLECT_ENABLED:-true}
+      ACTIVITY_DEFAULT_RADIUS_KM: ${ACTIVITY_DEFAULT_RADIUS_KM:-3.0}
+      ACTIVITY_CITY_OVERRIDE: ${ACTIVITY_CITY_OVERRIDE:-}
+      AMAP_API_KEY: ${AMAP_API_KEY:-}
+    depends_on:
+      redis:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: hotel_monitor_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
 
 volumes:
   pg_data:

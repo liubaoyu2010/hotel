@@ -10,3 +10,5 @@ redis
 alembic
 pytest
 httpx
+beautifulsoup4
+lxml

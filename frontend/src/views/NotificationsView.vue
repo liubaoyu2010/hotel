@@ -1,61 +1,58 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { Card, Table, Tag, Pagination } from "ant-design-vue";
 import { listNotifications } from "../api";
-import { normalizeError } from "../error";
+import dayjs from "dayjs";
 
 const items = ref<any[]>([]);
 const page = ref(1);
 const pageSize = ref(20);
 const total = ref(0);
-const error = ref("");
+const loading = ref(false);
+
+const columns = [
+  { title: "时间", dataIndex: "created_at", key: "created_at", width: 160, customRender: ({ text }: any) => dayjs(text).format("MM-DD HH:mm:ss") },
+  { title: "类型", dataIndex: "type", key: "type", width: 80 },
+  { title: "标题", dataIndex: "title", key: "title", width: 120 },
+  { title: "内容", dataIndex: "content", key: "content", ellipsis: true },
+];
+
+const typeLabel: Record<string, string> = { alert: "告警" };
+const typeColor: Record<string, string> = { alert: "red" };
 
 async function load() {
-  error.value = "";
-  const data = await listNotifications();
-  if (data?.code !== 200) {
-    error.value = normalizeError(data);
-    return;
+  loading.value = true;
+  const data = await listNotifications(page.value, pageSize.value);
+  if (data?.code === 200) {
+    items.value = data.data.items || [];
+    total.value = data.data.total || 0;
   }
-  total.value = data?.data?.total || 0;
-  page.value = data?.data?.page || 1;
-  pageSize.value = data?.data?.page_size || 20;
-  items.value = data?.data?.items || [];
+  loading.value = false;
+}
+
+function onPageChange(p: number, ps: number) {
+  page.value = p;
+  pageSize.value = ps;
+  load();
 }
 
 onMounted(load);
 </script>
 
 <template>
-  <section class="card">
-    <h3>Notifications</h3>
-    <button @click="load">Refresh</button>
-    <p class="meta">page={{ page }}, page_size={{ pageSize }}, total={{ total }}</p>
-    <p v-if="error" class="err">{{ error }}</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Type</th>
-          <th>Title</th>
-          <th>Content</th>
-          <th>Created</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="it in items" :key="it.id">
-          <td>{{ it.type }}</td>
-          <td>{{ it.title }}</td>
-          <td>{{ it.content }}</td>
-          <td>{{ it.created_at }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
+  <div>
+    <h2 style="margin-bottom: 20px">通知中心</h2>
+    <a-card>
+      <a-table :columns="columns" :data-source="items" :loading="loading" row-key="id" :pagination="false">
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'type'">
+            <a-tag :color="typeColor[record.type] || 'blue'" size="small">{{ typeLabel[record.type] || record.type }}</a-tag>
+          </template>
+        </template>
+      </a-table>
+      <div style="margin-top: 16px; text-align: right">
+        <a-pagination v-model:current="page" :total="total" :page-size="pageSize" @change="onPageChange" show-size-changer :page-size-options="['10','20','50']" />
+      </div>
+    </a-card>
+  </div>
 </template>
-
-<style scoped>
-.card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
-.meta { color: #666; }
-.err { color: #b00020; }
-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-</style>
